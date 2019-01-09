@@ -7,6 +7,7 @@ import net.sf.json.JSONArray;
 import net.sf.json.JSONObject;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.function.MapFunction;
 import org.apache.spark.api.java.function.PairFunction;
 import org.apache.spark.ml.feature.Word2Vec;
 import org.apache.spark.ml.feature.Word2VecModel;
@@ -75,14 +76,17 @@ public class ContentBasedJob implements Serializable {
      * @return
      */
     public Dataset<RowVector> segWord(Dataset<Row> ds) {
-        Dataset<RowVector> dfs =  ds.map(t-> {
-            RowVector gc = new RowVector();
-            gc.setId(t.getString(0));
-            gc.setTitle(t.getString(1));
-            List<Word> words = WordSegmenter.seg(t.getString(1));
-            List<String> tests = words.stream().map(word->word.getText()).collect(Collectors.toList());
-            gc.setWords(tests);
-            return gc;
+        Dataset<RowVector> dfs = ds.map(new MapFunction<Row, RowVector>() {
+            @Override
+            public RowVector call(Row t) throws Exception {
+                RowVector gc = new RowVector();
+                gc.setId(t.getString(0));
+                gc.setTitle(t.getString(1));
+                List<Word> words = WordSegmenter.seg(t.getString(1));
+                List<String> tests = words.stream().map(word->word.getText()).collect(Collectors.toList());
+                gc.setWords(tests);
+                return gc;
+            }
         }, Encoders.bean(RowVector.class));
         return dfs;
     }
@@ -118,6 +122,7 @@ public class ContentBasedJob implements Serializable {
         //获取词向量模型
         logger.info("Begin turn words of title in goods channel to vector!");
         Dataset<Row> goodsChannelDataset = model.transform(dfsChannelDataset);
+        //goodid->goodsVector
         JavaRDD<Row> goodsChannelRdd = goodsChannelDataset.toJavaRDD().persist(StorageLevel.MEMORY_AND_DISK());
 
         /*2. 获取CF推荐结果的title similariesParsedRdd*/

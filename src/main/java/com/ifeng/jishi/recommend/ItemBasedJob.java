@@ -118,9 +118,10 @@ public class ItemBasedJob  implements Serializable {
                     return new Tuple2<Set<String>, Set<String>>(visited_a, visited_b);
                 })
                 .collectAsMap();//最终返回Map类型结果
+        //1.合法用户点击记录集合
         Broadcast<Map<String, Tuple2<Set<String>, Set<String>>>> user_visited_bd = jsc.broadcast(new HashMap<>(user_visited));
 
-        //合法的items集合
+        //2.合法的items集合
         List<String> legal_items = data.mapToPair(row -> new Tuple2<String, Integer>(row.getString(1), 1))
                 .reduceByKey((a,b) -> a+b)
                 .filter(t -> t._2 >= minVisitedPerItem)
@@ -128,20 +129,21 @@ public class ItemBasedJob  implements Serializable {
                 .collect();
         Broadcast<Set<String>> legal_items_bd = jsc.broadcast(new HashSet<>(legal_items));
 
-        //过滤后有效的数据
+        //3.过滤后有效的数据, item被访问多且用户点击的数量限制
         JavaRDD<Row> filted_data = data
                 .filter(row -> user_visited_bd.getValue().containsKey(row.getString(0))
                         && legal_items_bd.getValue().contains(row.getString(1)));
         filted_data.cache();
 
-        // 物品 -> [(用户, score)] 倒排表
+        //4计算相似度
+        //4.1 物品 -> [(用户, score)] 倒排表
         JavaPairRDD<String, Iterable<Tuple2<String, Double>>> item_user_list = filted_data
                 .mapToPair(row -> new Tuple2<>(row.getString(1),
                         new Tuple2<String, Double>(row.getString(0), row.getDouble(2))))
                 .groupByKey();
         item_user_list.cache();
 
-        // 物品的访问量，用于计算物品相似度
+        //4.2 物品的访问量，用于计算物品相似度
         Map<String, Double> item_norm = item_user_list
                 .mapValues(iter -> {
                     Double score = 0.0;
@@ -151,9 +153,11 @@ public class ItemBasedJob  implements Serializable {
                     return score;
                 })
                 .collectAsMap();
+        //物品id -> 访问量
         Broadcast<Map<String, Double>> item_norm_bd = jsc.broadcast(new HashMap<>(item_norm));
 
-        //计算物品物品的相似度，余弦相似度计算
+        /***********算法的重点************/
+        //4.3计算物品物品的相似度，余弦相似度计算
         JavaPairRDD<String, List<Tuple2<String, Double>>> item_similaries = filted_data
                 //group items visited by the same user
                 .mapToPair(row -> new Tuple2<>(row.getString(0), new Tuple2<>(row.getString(1), row.getDouble(2))))
